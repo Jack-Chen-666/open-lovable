@@ -26,6 +26,7 @@ const googleGenerativeAI = createGoogleGenerativeAI({
 
 const openai = createOpenAI({
   apiKey: process.env.OPENAI_API_KEY,
+  baseURL: process.env.OPENAI_BASE_URL, // e.g., https://openrouter.ai/api/v1 for OpenRouter
 });
 
 // Helper function to analyze user preferences from conversation history
@@ -1155,10 +1156,21 @@ CRITICAL: When files are provided in the context:
         const isAnthropic = model.startsWith('anthropic/');
         const isGoogle = model.startsWith('google/');
         const isOpenAI = model.startsWith('openai/gpt-5');
-        const modelProvider = isAnthropic ? anthropic : (isOpenAI ? openai : (isGoogle ? googleGenerativeAI : groq));
-        const actualModel = isAnthropic ? model.replace('anthropic/', '') : 
-                           (model === 'openai/gpt-5') ? 'gpt-5' :
-                           (isGoogle ? model.replace('google/', '') : model);
+        const isMoonshot = model.startsWith('moonshotai/');
+        const modelProvider = isAnthropic
+          ? anthropic
+          : isOpenAI
+            ? openai
+            : isGoogle
+              ? googleGenerativeAI
+              : groq; // Moonshot models go to Groq
+        const actualModel = isAnthropic
+          ? model.replace('anthropic/', '')
+          : isOpenAI
+            ? 'gpt-5'
+            : isGoogle
+              ? model.replace('google/', '')
+              : model; // Keep full model name for Groq/Moonshot
 
         // Make streaming API call with appropriate provider
         const streamOptions: any = {

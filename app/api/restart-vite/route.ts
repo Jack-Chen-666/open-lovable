@@ -16,7 +16,9 @@ export async function POST() {
     console.log('[restart-vite] Forcing Vite restart...');
     
     // Kill existing Vite process and restart
-    const result = await global.activeSandbox.runCode(`
+    let result: any;
+    try {
+      result = await global.activeSandbox.runCode(`
 import subprocess
 import os
 import signal
@@ -118,7 +120,91 @@ with open('/tmp/vite-process.pid', 'w') as f:
 # Wait for Vite to fully start
 time.sleep(5)
 print("Vite is ready")
-    `);
+      `);
+    } catch (err) {
+      // Try to reconnect if the sandbox socket/connection died
+      const message = (err as Error)?.message || '';
+      const isSocketClosed = message.includes('UND_ERR_SOCKET') || message.includes('socket') || message.includes('closed');
+      if (isSocketClosed && global.sandboxData?.sandboxId) {
+        try {
+          const { Sandbox } = await import('@e2b/code-interpreter');
+          const reconnected = await Sandbox.connect(global.sandboxData.sandboxId, { apiKey: process.env.E2B_API_KEY });
+          global.activeSandbox = reconnected;
+          // retry once
+          result = await global.activeSandbox.runCode(`
+import subprocess
+import os
+import signal
+import time
+import threading
+import json
+import sys
+
+# Kill existing Vite process
+try:
+    with open('/tmp/vite-process.pid', 'r') as f:
+        pid = int(f.read().strip())
+        os.kill(pid, signal.SIGTERM)
+        print("Killed existing Vite process")
+        time.sleep(1)
+except:
+    print("No existing Vite process found")
+
+os.chdir('/home/user/app')
+
+# Clear error file
+error_file = '/tmp/vite-errors.json'
+with open(error_file, 'w') as f:
+    json.dump({"errors": [], "lastChecked": time.time()}, f)
+
+# Function to monitor Vite output for errors
+def monitor_output(proc, error_file):
+    while True:
+        line = proc.stderr.readline()
+        if not line:
+            break
+        sys.stdout.write(line)
+        if "Failed to resolve import" in line:
+            try:
+                import_match = line.find('"')
+                if import_match != -1:
+                    end_match = line.find('"', import_match + 1)
+                    if end_match != -1:
+                        package_name = line[import_match + 1:end_match]
+                        if not package_name.startswith('.'):
+                            with open(error_file, 'r') as f:
+                                data = json.load(f)
+                            if package_name.startswith('@'):
+                                pkg_parts = package_name.split('/')
+                                final_package = '/'.join(pkg_parts[:2]) if len(pkg_parts) >= 2 else package_name
+                            else:
+                                final_package = package_name.split('/')[0]
+                            error_obj = {"type": "npm-missing", "package": final_package, "message": line.strip(), "timestamp": time.time()}
+                            if not any(e['package'] == error_obj['package'] for e in data['errors']):
+                                data['errors'].append(error_obj)
+                            with open(error_file, 'w') as f:
+                                json.dump(data, f)
+                            print(f"WARNING: Detected missing package: {error_obj['package']}")
+            except Exception as e:
+                print(f"Error parsing Vite error: {e}")
+
+process = subprocess.Popen(['npm', 'run', 'dev'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+monitor_thread = threading.Thread(target=monitor_output, args=(process, error_file))
+monitor_thread.daemon = True
+monitor_thread.start()
+print("Vite restarted successfully!")
+with open('/tmp/vite-process.pid', 'w') as f:
+    f.write(str(process.pid))
+time.sleep(5)
+print("Vite is ready")
+          `);
+        } catch (reErr) {
+          return NextResponse.json({ success: false, error: 'Failed to restart Vite after reconnect', details: String(reErr) }, { status: 502 });
+        }
+      } else {
+        return NextResponse.json({ success: false, error: 'Failed to restart Vite', details: String(err) }, { status: 500 });
+      }
+    }
     
     return NextResponse.json({
       success: true,

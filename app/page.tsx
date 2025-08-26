@@ -394,11 +394,9 @@ export default function AISandboxPage() {
         log(`Sandbox ID: ${data.sandboxId}`);
         log(`URL: ${data.url}`);
         
-        // Update URL with sandbox ID
-        const newParams = new URLSearchParams(searchParams.toString());
-        newParams.set('sandbox', data.sandboxId);
-        newParams.set('model', aiModel);
-        router.push(`/?${newParams.toString()}`, { scroll: false });
+        // 项目化架构：不再在 URL 中暴露沙箱参数
+        // 沙箱状态通过项目管理 API 维护，保持 URL 简洁
+        console.log('[createSandbox] 沙箱创建成功，URL 保持简洁');
         
         // Fade out loading background after sandbox loads
         setTimeout(() => {
@@ -2047,12 +2045,27 @@ Tip: I automatically detect and install npm packages from your code imports (lik
         currentProject: `Clone of ${url}`
       }));
       
-      // Start sandbox creation in parallel with code generation
-      let sandboxPromise: Promise<void> | null = null;
-      if (!sandboxData) {
-        addChatMessage('Creating sandbox while generating your React app...', 'system');
-        sandboxPromise = createSandbox(true);
-      }
+      // 项目化架构：创建新项目并跳转到项目页面
+      addChatMessage('Creating project for your cloned website...', 'system');
+      
+      try {
+        const cleanUrl = url.replace(/^https?:\/\//i, '');
+        const projectResponse = await fetch('/api/projects', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: `Clone of ${cleanUrl}`,
+            model: aiModel,
+            visibility: 'private'
+          })
+        });
+
+        if (!projectResponse.ok) {
+          throw new Error('Failed to create project');
+        }
+
+        const projectData = await projectResponse.json();
+        const projectId = projectData.id;
       
       addChatMessage('Analyzing and generating React recreation...', 'system');
       
@@ -2102,6 +2115,35 @@ IMAGE HANDLING RULES:
 - Example: If you see "https://example.com/logo.png" in the scraped content, use that exact URL
 
 Focus on the key sections and content, making it clean and modern while preserving visual assets.`;
+        
+        // 保存克隆数据到本地存储，以便项目页面使用
+        const cloneData = {
+          url,
+          scrapeData,
+          recreatePrompt,
+          homeContextInput,
+          timestamp: Date.now()
+        };
+        
+        localStorage.setItem(`cloneData_${projectId}`, JSON.stringify(cloneData));
+        
+        addChatMessage(`Project created successfully! Redirecting to project workspace...`, 'system');
+        
+        // 跳转到项目页面
+        router.push(`/projects/${projectId}`);
+        return; // 提前返回，不执行后续的生成逻辑
+        
+      } catch (projectError) {
+        console.error('Failed to create project:', projectError);
+        addChatMessage(`Failed to create project: ${projectError.message}. Continuing with sandbox creation...`, 'system');
+        
+        // 如果项目创建失败，回退到原来的沙箱创建逻辑
+        let sandboxPromise: Promise<void> | null = null;
+        if (!sandboxData) {
+          addChatMessage('Creating sandbox while generating your React app...', 'system');
+          sandboxPromise = createSandbox(true);
+        }
+      }
       
       setGenerationProgress(prev => ({
         isGenerating: true,

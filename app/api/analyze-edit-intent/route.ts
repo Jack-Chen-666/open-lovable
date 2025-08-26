@@ -18,7 +18,7 @@ const anthropic = createAnthropic({
 
 const openai = createOpenAI({
   apiKey: process.env.OPENAI_API_KEY,
-  baseURL: process.env.OPENAI_BASE_URL,
+  baseURL: process.env.OPENAI_BASE_URL, // can be set to OpenRouter
 });
 
 // Schema for the AI's search plan - not file selection!
@@ -105,6 +105,9 @@ export async function POST(request: NextRequest) {
       }
     } else if (model.startsWith('google/')) {
       aiModel = createGoogleGenerativeAI(model.replace('google/', ''));
+    } else if (model.startsWith('moonshotai/')) {
+      // Route Moonshot models through Groq
+      aiModel = groq(model);
     } else {
       // Default to groq if model format is unclear
       aiModel = groq(model);
